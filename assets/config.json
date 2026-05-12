@@ -1,0 +1,62 @@
+{
+  "fitting": {
+    "defaults": {
+      "k_min": 3.0,
+      "k_max": 12.0,
+      "r_min": 1.0,
+      "r_max": 5.0,
+      "k_weight": 2,
+      "window": "hanning",
+      "dk": 1.0,
+      "s02": 1.0,
+      "s02_fixed": true,
+      "_note": "Override these defaults at runtime via command-line arguments."
+    },
+    "optimization": {
+      "method": "trf",
+      "loss": "soft_l1",
+      "ftol": 1e-8,
+      "xtol": 1e-8,
+      "max_nfev": 2000,
+      "_note": "scipy.optimize.least_squares parameters."
+    }
+  },
+  "output": {
+    "figure": {
+      "dpi": 150,
+      "format_pdf": true,
+      "format_png": true,
+      "png_dpi": 300,
+      "latex_math": true,
+      "_note": "mathtext renderer used (no external LaTeX required)."
+    },
+    "excel": {
+      "sheets": [
+        "Feff_Paths",
+        "Fit_Parameters",
+        "Amplitude_Expression",
+        "Fit_Conditions",
+        "Data_Processing",
+        "Results"
+      ],
+      "_note": "openpyxl required for Excel output."
+    },
+    "directory_structure": {
+      "data_dir": "data",
+      "scripts_dir": "scripts",
+      "fit_dir": "Fit",
+      "results_dir": "results",
+      "_note": "All paths relative to project directory."
+    }
+  },
+  "backend": {
+    "preferred": "scipy",
+    "alternatives": ["larch"],
+    "larch_note": "Install xraylarch for full Larch backend support: pip install xraylarch"
+  },
+  "dependencies": {
+    "required": ["numpy", "scipy", "matplotlib"],
+    "optional": ["openpyxl", "xraylarch"],
+    "python_min_version": "3.9"
+  }
+}
