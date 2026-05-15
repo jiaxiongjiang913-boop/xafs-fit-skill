@@ -39,6 +39,73 @@ analysis", "generate XAFS report", or "run XAFS fitting".
 
 ## Workflow
 
+### Step 0: Data Preprocessing (Athena Standard Pipeline)
+
+Before fitting, always preprocess raw data through the Athena standard pipeline.
+Use **μ(E) transmission mode** data by default.
+
+**Pipeline**: Calibration → μ(E) → Normalized μ(E) → χ(k) → |χ(R)|
+
+**Procedure** (using xraylarch or scipy):
+
+1. **Parse XDI file**: XDI files often contain both sample data AND reference foil data
+   - XDI header stores metadata: `Element.symbol`, `Element.edge`, `Mono.d_spacing`, etc.
+   - Multiple columns in one file: typically sample μ(E) column(s) + foil μ(E) column(s)
+   - Sample column names: `mu_trans`, `It/I0`, `mu(E)`, `mu_norm`
+   - Foil column names: `mu_foil`, `mu_ref`, `reference`, `Iref/I0`
+   - Always scan the header and column names first, then ask user to confirm which is sample vs foil
+   - If only one dataset is present, ask if foil is measured separately
+
+2. **Foil identification**: Before calibration, extract and inspect the foil signal
+   - Plot foil μ(E) alongside sample to visually confirm correct column assignment
+   - Check foil edge position against known reference values (e.g., Fe K-edge at 7112 eV, Cu at 8979 eV)
+   - Use foil for energy calibration: align foil edge to known E0
+   - **CRITICAL**: Do NOT merge foil data into sample preprocessing — foil is for calibration only
+
+3. **Calibration**: Align energy using the reference foil
+   - Auto-detect foil edge inflection point (first derivative maximum) → ΔE = E0_known - E0_measured
+   - Apply same energy shift to sample data: E_sample_calibrated = E_sample_raw + ΔE
+   - If no foil, ask user for E0 reference value or calibrate to known sample edge
+
+4. **μ(E) plot**: Raw absorption vs energy, with pre-edge and post-edge visible
+   - X-axis: Energy (eV), Y-axis: μ(E)
+   - Mark E0 position with vertical dashed line
+   - Label: "Calibrated μ(E)" with sample name
+
+5. **Normalized μ(E) plot**: Background-subtracted, edge-step normalized
+   - Pre-edge line + post-edge line → normalization constant
+   - Flattened post-edge baseline (0 to 1 scale)
+   - X-axis: Energy (eV), Y-axis: Normalized μ(E)
+   - Label: "Normalized μ(E)" with sample name
+
+6. **χ(k) plot**: Extracted EXAFS oscillations
+   - Convert E → k: k = sqrt(2m_e(E - E0)/ħ²) ≈ sqrt(0.2625 · (E - E0))
+   - Background spline subtraction (autobk)
+   - Apply k-weight (default k¹ = raw χ(k))
+   - X-axis: k (Å⁻¹), Y-axis: kⁿ·χ(k)
+   - Label: "kⁿ·χ(k)" with k-weight
+
+7. **|χ(R)| plot**: Fourier Transform magnitude
+   - FT of k-weighted χ(k) over k-range
+   - Use Hanning window at both ends
+   - X-axis: R (Å), Y-axis: |χ(R)|
+   - Label: "|χ(R)|" with k-range annotation
+   - Phase-uncorrected (apparent R, ~0.3–0.5 Å shorter than true R)
+
+**Output**: Four independent figures saved to `preprocess/` directory:
+```
+project_dir/
+├── preprocess/
+│   ├── 01_<sample>_muE.png          # Calibrated μ(E)
+│   ├── 02_<sample>_norm_muE.png     # Normalized μ(E)
+│   ├── 03_<sample>_chi_k.png        # χ(k)
+│   └── 04_<sample>_chi_R.png        # |χ(R)|
+```
+
+**Guard rule**: Do NOT proceed to fitting until all four figures look reasonable.
+If the user flags issues (bad normalization, noisy χ(k), suspicious peaks in |χ(R)|),
+adjust parameters and regenerate before continuing.
+
 ### Step 1: Gather Information
 
 At the start of each session, ask the user (use AskUserQuestion for efficiency):
@@ -82,15 +149,27 @@ Ask the user about fitting parameters. Tailor questions to the fitting type:
 
 ### Step 3: Execute Fitting
 
-1. Read the data file using the chosen backend
-2. Pre-process: background subtraction, normalization, Fourier transform
-3. Set up the fitting model based on user-defined paths and parameters
-4. Run the fit with appropriate optimization algorithm
-5. Calculate fit quality metrics:
-   - R-factor = sum((data - fit)^2) / sum(data^2)
-   - Reduced chi-square = chi^2 / (N_indep - N_var)
-   - N_indep = 2 * delta_k * delta_R / pi
-6. Store results in a structured dict for downstream processing
+**CRITICAL: Do NOT explore xraylarch internal APIs (FeffRunner, feffit_dataset, etc.).**
+All of them require the same domain knowledge as direct implementation.
+Always use the direct approach:
+  - Write feff.inp manually (ATOMS + POTENTIALS + CONTROL cards)
+  - Run feff8l via subprocess
+  - Parse feffNNNN.dat (k, |f(k)|, phase, reff, degen)
+  - Use standard EXAFS equation with lmfit/scipy for fitting
+
+1. Read data using xraylarch `read_xdi()`, pre-process with `autobk()` and `xftf()`
+2. Generate feff.inp from CIF (ATOMS card with Cartesian coords, POTENTIALS, RPATH=5.0)
+3. Run `feff8l` via subprocess in feff working directory
+4. Parse feffNNNN.dat: extract k-grid, |f_eff(k)|, phase(k), reff, degeneracy
+5. Set up EXAFS equation directly:
+   χ(k) = Σ (S₀²·Nᵢ)/(k·Rᵢ²) · |fᵢ(k)| · sin(2kRᵢ + δᵢ(k)) · exp(-2σᵢ²k²)
+   Use lmfit.Parameters for N, R, σ², ΔE₀ per path
+6. Fit in k-space with k-weight, also FT to R-space for comparison
+7. Calculate fit quality:
+   - R-factor = Σ(χ_exp - χ_fit)² / Σ(χ_exp)²
+   - Reduced chi-square = χ² / (N_indep - N_var)
+   - N_indep = 2·Δk·ΔR / π
+8. Store results dict for downstream plotting
 
 ### Step 4: Generate Outputs
 
@@ -100,6 +179,11 @@ Follow the standard XAFS output format:
 ```
 project_dir/
 ├── data/                    # Original data
+├── preprocess/              # Step 0 output
+│   ├── 01_<sample>_muE.png
+│   ├── 02_<sample>_norm_muE.png
+│   ├── 03_<sample>_chi_k.png
+│   └── 04_<sample>_chi_R.png
 ├── scripts/
 │   ├── 01_<sample>_XANES.py  # XANES normalization
 │   └── 02_<sample>_fit.py    # Fitting script
