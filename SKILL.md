@@ -14,9 +14,9 @@ description: >-
 license: MIT
 metadata:
   author: Claude Code User
-  version: 1.0.0
+  version: 1.2.0
   created: 2026-05-13
-  last_reviewed: 2026-05-13
+  last_reviewed: 2026-05-17
   review_interval_days: 90
 activation: /xafs-fit
 provenance:
@@ -36,6 +36,110 @@ publication-ready figures and parameter tables.
 User invokes `/xafs-fit` or asks to fit XAFS/EXAFS/XANES data. You may also
 activate on phrases like "fit my XAFS data", "process EXAFS spectrum", "XANES
 analysis", "generate XAFS report", or "run XAFS fitting".
+
+## Theoretical Framework for EXAFS Fitting
+
+This section provides the deep physical foundation needed to make intelligent fitting
+decisions. Every parameter in an EXAFS fit has a clear physical origin — understanding
+these prevents mechanical "fishing" and produces physically meaningful results.
+
+### 1. The EXAFS Equation — First Principles Derivation
+
+X-ray absorption is a quantum transition from an initial state to a final state,
+described by Fermi's Golden Rule:
+
+$$\mu(E) \propto |\langle i|H|f\rangle|^2$$
+
+The initial state |i⟩ (x-ray + core electron + no photoelectron) is localized on the
+absorbing atom. The final state |f⟩ (no x-ray + core hole + photoelectron) is
+perturbed by neighboring atoms via photoelectron scattering. Splitting |f⟩ into the
+bare-atom |f₀⟩ and scattered |Δf⟩ components:
+
+$$|f\rangle = |f_0\rangle + |\Delta f\rangle$$
+
+expands to:
+
+$$\mu(E) = \mu_0(E)[1 + \chi(E)]$$
+
+where χ(E) ∝ ⟨i|H|Δf⟩, and the interaction H reduces to e^{ikr} (p·A term). This
+yields the fundamental insight:
+
+> **EXAFS χ(E) is proportional to the amplitude of the scattered photoelectron wave
+> at the absorbing atom.**
+
+Modeling the photoelectron as a spherical wave ψ(k,r) = e^{ikr}/(kr) traveling to
+a neighbor and back (round trip distance 2R), scattering with amplitude f(k) and
+phase δ(k) at each neighbor, gives:
+
+$$\chi(k) = S_0^2 \sum_j \frac{N_j f_j(k)}{k R_j^2} e^{-2k^2\sigma_j^2} e^{-2R_j/\lambda(k)} \sin[2kR_j + \delta_j(k)]$$
+
+### 2. Physical Meaning of Every Term
+
+| Term | Symbol | Physical Origin | What It Tells You |
+|------|--------|----------------|-------------------|
+| Amplitude reduction | S₀² | Multi-electron relaxation after core-hole creation | ~0.7–1.0; affected by shake-up/shake-off |
+| Coordination number | Nⱼ | Number of equivalent neighbor atoms at distance Rⱼ | Integer expected; often correlated with σ² |
+| Half-path distance | Rⱼ | Distance from absorber to scatterer | Precision ~0.01–0.02 Å |
+| Backscattering amplitude | fⱼ(k) | Scattering power of neighbor atom, Z-dependent | Allows Z identification (±5) |
+| Scattering phase shift | δⱼ(k) | Phase change upon scattering | Causes R-space peak shift ~0.3–0.5 Å |
+| Debye-Waller factor | σ²ⱼ | Mean-square relative displacement (thermal + static) | 0.001–0.003 Å² for tight 1st shell |
+| Mean free path | λ(k) | Inelastic scattering + core-hole lifetime | Dicates ~5–30 Å probe depth |
+| k-to-R conversion | k = √(0.2625(E−E₀)) | Photoelectron wave number | E₀ error shifts ALL R values |
+
+### 3. R-Space Fitting — Why It's Preferred
+
+After Fourier transforming χ(k) → χ(R), different coordination shells separate into
+distinct peaks in R-space. This enables:
+
+- **Selective fitting**: Fit individual shells by restricting the R-range window,
+  ignoring unwanted higher shells
+- **Isolation of contributions**: Each peak in |χ(R)| corresponds to a specific
+  coordination sphere
+- **Complex fitting is mandatory**: You MUST fit both real and imaginary parts of
+  χ(R), not just the magnitude |χ(R)|. The real part carries the phase information
+  that constrains R and E₀
+
+The Fourier transform is a complex function. Magnitude alone contains no phase
+information — R and E₀ refinement requires phase constraints from Re[χ(R)].
+
+### 4. The N_indep Constraint — How Many Parameters Can You Fit?
+
+From signal analysis theory, the maximum number of independent measurements
+extractable from an EXAFS spectrum is:
+
+$$N_{indep} \approx \frac{2 \cdot \Delta k \cdot \Delta R}{\pi}$$
+
+The number of free parameters N_var must satisfy:
+
+$$N_{var} \leq N_{indep}$$
+
+and more conservatively:
+
+$$N_{var} \leq \frac{2}{3} N_{indep}$$
+
+**Example calculation** (a-MoO3 project):
+Δk = 10.5 Å⁻¹ (2.5–13.0), ΔR = 1.5 Å (1.0–2.5)
+→ N_indep ≈ 2 × 10.5 × 1.5 / 3.14 ≈ 10.0
+→ Max N_var ≈ 6–7 ✓ (7 used in project)
+
+This is an **upper estimate** — in practice, fewer variables produce more reliable fits.
+
+### 5. Fourier Transform Phase Shift — The 0.5 Å Offset
+
+In |χ(R)|, the first-shell peak appears at R ≈ R_true − 0.3 to 0.5 Å. This is
+because the EXAFS phase is 2kR + δ(k), and δ(k) adds ~0.5 Å. **During fitting, the
+theoretical phase is included** — so fitted R values are true distances, not apparent
+ones. Always use Feff-calculated δ(k) or experimental standards to recover true R.
+
+### 6. Variable Coupling Physics
+
+**CN ↔ σ² anti-correlation**: Both N and σ² affect oscillation amplitude. Increasing
+N boosts the signal; increasing σ² damps it. They are typically ~90% anti-correlated.
+When possible, fix one or link constraints.
+
+**R ↔ E₀ correlation**: E₀ shift changes k-scale, which shifts fitted R. A +1 eV E₀
+shift roughly corresponds to −0.01 Å in R for first shell. Always float E₀ with tight
+bounds.
 
 ## Workflow
 
@@ -149,27 +253,103 @@ Ask the user about fitting parameters. Tailor questions to the fitting type:
 
 ### Step 3: Execute Fitting
 
-**CRITICAL: Do NOT explore xraylarch internal APIs (FeffRunner, feffit_dataset, etc.).**
-All of them require the same domain knowledge as direct implementation.
-Always use the direct approach:
-  - Write feff.inp manually (ATOMS + POTENTIALS + CONTROL cards)
-  - Run feff8l via subprocess
-  - Parse feffNNNN.dat (k, |f(k)|, phase, reff, degen)
-  - Use standard EXAFS equation with lmfit/scipy for fitting
+All xraylarch XAFS APIs can be used. Below is the known-good path and common traps.
 
-1. Read data using xraylarch `read_xdi()`, pre-process with `autobk()` and `xftf()`
-2. Generate feff.inp from CIF (ATOMS card with Cartesian coords, POTENTIALS, RPATH=5.0)
-3. Run `feff8l` via subprocess in feff working directory
-4. Parse feffNNNN.dat: extract k-grid, |f_eff(k)|, phase(k), reff, degeneracy
-5. Set up EXAFS equation directly:
-   χ(k) = Σ (S₀²·Nᵢ)/(k·Rᵢ²) · |fᵢ(k)| · sin(2kRᵢ + δᵢ(k)) · exp(-2σᵢ²k²)
-   Use lmfit.Parameters for N, R, σ², ΔE₀ per path
-6. Fit in k-space with k-weight, also FT to R-space for comparison
-7. Calculate fit quality:
-   - R-factor = Σ(χ_exp - χ_fit)² / Σ(χ_exp)²
-   - Reduced chi-square = χ² / (N_indep - N_var)
-   - N_indep = 2·Δk·ΔR / π
-8. Store results dict for downstream plotting
+#### 3.1 Recommended approach: FeffPathGroup + _calc_chi + lmfit
+
+**Why this works:** `FeffPathGroup` loads feffNNNN.dat and applies IFEFFIT's central-atom
+phase correction (`pha_feff` → `pha`) and amplitude normalization (`mag_feff` → `amp`).
+`_calc_chi` uses these corrected arrays — skipping this layer causes ΔE₀ to drift to 
+bounds compensating for systematic phase errors.
+
+**Trap: create_path_params naming.** The function generates hashkey-based parameter names:
+`{par}_{dataset}_{hashkey}`, not `amp_1`, `delr_1`. All params default to `vary=False`.
+You must activate them explicitly:
+
+```python
+from larch.xafs import FeffPathGroup
+from lmfit import Parameters, minimize
+
+pg = FeffPathGroup(filename='feff0001.dat', label='Fe-O', degen=4.0, s02=0.85)
+
+params = Parameters()
+pg.create_path_params(params=params, dataset='mydata')
+
+# Keys follow pattern: {param}_{dataset}_{pg.hashkey}
+dk = f'deltar_mydata_{pg.hashkey}'
+sk = f'sigma2_mydata_{pg.hashkey}'
+ek = f'e0_mydata_{pg.hashkey}'
+
+params[dk].set(value=0.0, vary=True, min=-0.3, max=0.3)
+params[sk].set(value=0.005, vary=True, min=0.001, max=0.05)
+params[ek].set(value=0.0, vary=True, min=-10, max=10)
+
+def calc_chi(kv):
+    pg._calc_chi(k=kv)
+    return pg.chi.copy()
+```
+
+**Trap: params must be `lmfit.Parameters`**, not `larch.Group`. `create_path_params`
+calls `group2params()` internally, which silently skips non-`lmfit.Parameter` objects.
+
+#### 3.2 Alternative: feffit engine (full IFEFFIT)
+
+`larch.xafs.feffit()` is the IFEFFIT-native fitter. It requires a `FeffitDataSet`
+and correct parameter setup:
+
+```python
+from larch.xafs import feffit as run_feffit
+from larch.xafs.feffit import feffit_dataset, feffit_transform
+from larch import Group
+
+dat = Group(k=k_array, chi=chi_array, kweight=3, e0=7112.0)
+trans = feffit_transform(kmin=3.0, kmax=12.0, kwindow='hanning', dk=1.0, rebin=False)
+ds = feffit_dataset(data=dat, paths=[pg], transform=trans, pathlist=[1])
+
+# MUST use lmfit.Parameters, NOT larch.Group
+from lmfit import Parameters
+params = Parameters()
+pg.create_path_params(params=params, dataset='mydata')
+# activate vary on desired params...
+
+ds.prepare_fit(params)  # computes model chi
+result = run_feffit(params, ds, rmax_out=8)
+```
+
+**Trap: `feffit_report(ds, params)` requires passing the `feffit()` return value first.**
+The signature is `feffit_report(result, ds, params)` in some versions. If report returns
+None, check the call order.
+
+**Trap: `rebin=True` can cause "more variables than data points" error.** The rebinned
+data array may be smaller than the number of free parameters. Use `rebin=False` for
+first attempts, enable rebin only when data density is sufficient.
+
+#### 3.3 Fallback: direct feff parse + manual EXAFS equation
+
+Only use when FeffPathGroup._calc_chi is unavailable. **The raw feff6 `pha_feff` column
+is missing central-atom phase correction** — expect ΔE₀ to drift negative (typically
+hitting bounds at −10 to −25 eV) as it compensates for the systematic phase offset.
+R-factors will be ~0.5 (vs ~0.1 with _calc_chi).
+
+```python
+# Parse feffNNNN.dat directly (skip 13 header lines in feff6)
+data = np.loadtxt('feff0001.dat', skiprows=13)
+feff_k, feff_mag, feff_phase = data[:, 0], data[:, 2], data[:, 3]
+
+# Standard EXAFS equation (phase correction missing)
+def exafs_model(k, amp, R, sig2, dE):
+    k_eff = np.sqrt(np.maximum(k**2 - 0.2625*dE, 0.01))
+    f = np.interp(k_eff, feff_k, feff_mag)
+    p = np.interp(k_eff, feff_k, feff_phase)
+    return S02 * amp * f / (k_eff*R**2) * np.sin(2*k_eff*R + p) * np.exp(-2*k_eff**2*sig2)
+```
+
+#### 3.4 Fit quality metrics (all approaches)
+
+- R-factor = Σ(χ_exp − χ_fit)² / Σ(χ_exp)²
+- Reduced chi-square = χ² / (N_indep − N_var)
+- N_indep = 2·Δk·ΔR / π
+- Store results dict for downstream plotting (see Step 4)
 
 ### Step 4: Generate Outputs
 
@@ -296,3 +476,12 @@ Each re-fit creates a new Fit_XX folder. The old one stays.
 | `references/troubleshooting.md` | Common XAFS fitting problems and solutions |
 
 See references/ for detailed documentation.
+
+## Key Literature
+
+1. Newville, M. "Fundamentals of XAFS" (2008), University of Chicago.
+   Comprehensive introduction covering EXAFS theory, data reduction, and modeling.
+2. Stern, E.A. and Heald, S.M. "Principles and Applications of EXAFS", in
+   Handbook of Synchrotron Radiation (1983).
+3. Rehr, J.J. and Albers, R.C. "Theoretical approaches to x-ray absorption fine
+   structure", Rev. Mod. Phys. 72, 621 (2000).
