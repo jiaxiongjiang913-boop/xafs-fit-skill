@@ -13,14 +13,14 @@ description: >-
   structured Fit_XX output folders. Cross-platform (Windows/Linux/macOS).
 license: MIT
 metadata:
-  author: Claude Code User
-  version: 1.2.0
+  author: 波奇
+  version: 1.3.0
   created: 2026-05-13
-  last_reviewed: 2026-05-17
+  last_reviewed: 2026-05-25
   review_interval_days: 90
 activation: /xafs-fit
 provenance:
-  maintainer: user
+  maintainer: 波奇
   version: 1.0.0
   created: 2026-05-13
 ---
@@ -143,72 +143,143 @@ bounds.
 
 ## Workflow
 
-### Step 0: Data Preprocessing (Athena Standard Pipeline)
+### Step 0: Data Preprocessing (SSRF BL17B Standard Pipeline)
 
 Before fitting, always preprocess raw data through the Athena standard pipeline.
-Use **μ(E) transmission mode** data by default.
+SSRF BL17B outputs `.xdi` files with **8 standard columns**:
+
+| Column | Field | Description |
+|--------|-------|-------------|
+| 1 | energy eV | X-ray energy |
+| 2 | i0 | Incident intensity (ion chamber before sample) |
+| 3 | itrans | Transmitted intensity (ion chamber after sample) |
+| 4 | ifluor | Fluorescence signal |
+| 5 | irefer | Reference channel (usually Fe foil) |
+| 6 | mutrans | Pre-calculated μ(E) in transmission = −ln(itrans/i0) |
+| 7 | mufluor | Pre-calculated μ(E) in fluorescence = ifluor/i0 |
+| 8 | murefer | Pre-calculated reference μ(E), used for calibration |
+
+#### Three Import Modes (Athena Column Selection)
+
+**Mode A — Use pre-calculated column (fast, most common)**
+
+| Setting | Value |
+|---------|-------|
+| Energy | Column.1 (energy) |
+| Numerator | Column.6 (mutrans) or Column.7 (mufluor) |
+| Denominator | 留空 (Multiplicative constant = 1) |
+| Natural log | **不勾选** |
+| Invert | **不勾选** |
+| Result | μ(E) = mutrans |
+| When to use | Routine reporting, beamline pre-processing is sufficient |
+
+**Mode B — Manual transmission mode (recommended for high-quality data)**
+
+| Setting | Value |
+|---------|-------|
+| Energy | Column.1 (energy) |
+| Numerator | Column.3 (itrans) |
+| Denominator | Column.2 (i0) |
+| Natural log | **勾选** |
+| Invert | **勾选** |
+| Result | μ(E) = −ln(itrans/i0) |
+| When to use | High-concentration samples, good transmission signal (e.g., Fe foil, FeOCl film) |
+
+**Mode C — Fluorescence mode (dilute or thick samples)**
+
+| Setting | Value |
+|---------|-------|
+| Energy | Column.1 (energy) |
+| Numerator | Column.4 (ifluor) |
+| Denominator | Column.2 (i0) |
+| Natural log | **不勾选** |
+| Invert | **不勾选** |
+| Result | μ(E) = ifluor/i0 |
+| When to use | Dilute samples; may need self-absorption correction later |
+
+#### Reference Channel (Energy Calibration)
+
+When "Import reference channel" is checked:
+- Energy: Column.1
+- Numerator: **Column.8 (murefer)** ← pre-calculated foil μ(E), ALWAYS use this
+- Denominator: 留空 (Multiplicative constant = 1)
+- Natural log: **不勾选** (murefer is already μ(E))
+- **Do NOT use Col.3 (itrans) for reference** — it's raw intensity, not μ(E), and will give wrong edge position (~15 eV off)
+- Must check **Same element** checkbox
+- Used ONLY for calibration; never merge into sample data
+
+#### Calibration Procedure
+
+1. Extract murefer signal (Column.8) from XDI file
+2. Auto-detect foil edge inflection point → ΔE = E0_known − E0_measured
+3. Apply same ΔE shift to sample μ(E)
+4. Fe K-edge: E0_known = 7112.0 eV
+
+#### Python Equivalent (xraylarch or manual)
+
+```python
+import numpy as np
+
+# Parse XDI: skip header lines (starting with #), read 8 columns
+with open("sample.xdi", encoding="utf-8", errors="replace") as f:
+    rows = [[float(x) for x in l.split()] for l in f if l.strip() and not l.startswith("#")]
+data = np.array(rows)
+
+E_raw = data[:, 0]    # Column.1: energy eV
+i0    = data[:, 1]    # Column.2: i0
+itrans = data[:, 2]   # Column.3: itrans
+ifluor = data[:, 3]   # Column.4: ifluor
+irefer = data[:, 4]   # Column.5: irefer
+mutrans = data[:, 5]  # Column.6: mutrans (pre-calc mu)
+mfluor  = data[:, 6]  # Column.7: mufluor (pre-calc fluo mu)
+murefer = data[:, 7]  # Column.8: murefer (reference mu)
+
+# Mode A: Use pre-calculated mutrans
+muT = mutrans
+
+# Mode B: Manual transmission
+muT = -np.log(np.maximum(itrans / np.maximum(i0, 1e-12), 1e-12))
+
+# Mode C: Fluorescence
+muF = ifluor / np.maximum(i0, 1e-12)
+
+# Calibration using murefer (Column.8)
+ref_region = (E_raw > 7080) & (E_raw < 7140)  # Fe K-edge window
+e0_measured = E_raw[ref_region][np.argmax(np.gradient(murefer[ref_region]))]
+dE = 7112.0 - e0_measured
+E_calibrated = E_raw + dE
+```
+
+#### Preprocessing Pipeline
 
 **Pipeline**: Calibration → μ(E) → Normalized μ(E) → χ(k) → |χ(R)|
 
-**Procedure** (using xraylarch or scipy):
+1. **Parse XDI**: Read 8-column data, extract mutrans (Col.6) for sample, murefer (Col.8) for calibration
+2. **Calibrate**: Align murefer edge to known E0, apply ΔE to sample
+3. **μ(E) plot**: Raw absorption, E0 marked with dashed line
+4. **Normalized μ(E)**: Pre-edge line (−150 to −30 eV) + post-edge normalization
+5. **χ(k) plot**: k = √0.2625·(E−E0), spline background subtraction
+6. **|χ(R)| plot**: FT, Hanning window, **X-axis 0–10 Å**, Y-axis |χ(R)|
 
-1. **Parse XDI file**: XDI files often contain both sample data AND reference foil data
-   - XDI header stores metadata: `Element.symbol`, `Element.edge`, `Mono.d_spacing`, etc.
-   - Multiple columns in one file: typically sample μ(E) column(s) + foil μ(E) column(s)
-   - Sample column names: `mu_trans`, `It/I0`, `mu(E)`, `mu_norm`
-   - Foil column names: `mu_foil`, `mu_ref`, `reference`, `Iref/I0`
-   - Always scan the header and column names first, then ask user to confirm which is sample vs foil
-   - If only one dataset is present, ask if foil is measured separately
+#### Pre-Checks After Import
 
-2. **Foil identification**: Before calibration, extract and inspect the foil signal
-   - Plot foil μ(E) alongside sample to visually confirm correct column assignment
-   - Check foil edge position against known reference values (e.g., Fe K-edge at 7112 eV, Cu at 8979 eV)
-   - Use foil for energy calibration: align foil edge to known E0
-   - **CRITICAL**: Do NOT merge foil data into sample preprocessing — foil is for calibration only
+Before proceeding to fit, verify:
+- Absorption edge position correct (Fe K ≈ 7112 eV)
+- Edge jump reasonable (pure foil ~1, sample depends on concentration)
+- Pre-edge / post-edge smooth, no glitches or bad points
+- k-space quality: low noise at high k, continuous oscillations
 
-3. **Calibration**: Align energy using the reference foil
-   - Auto-detect foil edge inflection point (first derivative maximum) → ΔE = E0_known - E0_measured
-   - Apply same energy shift to sample data: E_sample_calibrated = E_sample_raw + ΔE
-   - If no foil, ask user for E0 reference value or calibrate to known sample edge
-
-4. **μ(E) plot**: Raw absorption vs energy, with pre-edge and post-edge visible
-   - X-axis: Energy (eV), Y-axis: μ(E)
-   - Mark E0 position with vertical dashed line
-   - Label: "Calibrated μ(E)" with sample name
-
-5. **Normalized μ(E) plot**: Background-subtracted, edge-step normalized
-   - Pre-edge line + post-edge line → normalization constant
-   - Flattened post-edge baseline (0 to 1 scale)
-   - X-axis: Energy (eV), Y-axis: Normalized μ(E)
-   - Label: "Normalized μ(E)" with sample name
-
-6. **χ(k) plot**: Extracted EXAFS oscillations
-   - Convert E → k: k = sqrt(2m_e(E - E0)/ħ²) ≈ sqrt(0.2625 · (E - E0))
-   - Background spline subtraction (autobk)
-   - Apply k-weight (default k¹ = raw χ(k))
-   - X-axis: k (Å⁻¹), Y-axis: kⁿ·χ(k)
-   - Label: "kⁿ·χ(k)" with k-weight
-
-7. **|χ(R)| plot**: Fourier Transform magnitude
-   - FT of k-weighted χ(k) over k-range
-   - Use Hanning window at both ends
-   - X-axis: R (Å), Y-axis: |χ(R)|
-   - Label: "|χ(R)|" with k-range annotation
-   - Phase-uncorrected (apparent R, ~0.3–0.5 Å shorter than true R)
-
-**Output**: Four independent figures saved to `preprocess/` directory:
+**Output**: Four figures per sample saved to `preprocess/`:
 ```
 project_dir/
 ├── preprocess/
 │   ├── 01_<sample>_muE.png          # Calibrated μ(E)
 │   ├── 02_<sample>_norm_muE.png     # Normalized μ(E)
 │   ├── 03_<sample>_chi_k.png        # χ(k)
-│   └── 04_<sample>_chi_R.png        # |χ(R)|
+│   └── 04_<sample>_chi_R.png        # |χ(R)|, 0–10 Å
 ```
 
 **Guard rule**: Do NOT proceed to fitting until all four figures look reasonable.
-If the user flags issues (bad normalization, noisy χ(k), suspicious peaks in |χ(R)|),
-adjust parameters and regenerate before continuing.
 
 ### Step 1: Gather Information
 
@@ -237,7 +308,12 @@ Ask the user about fitting parameters. Tailor questions to the fitting type:
 **For EXAFS fitting:**
 - k-range: [kmin, kmax] (e.g., 3-12 Angstrom^-1)
 - R-range: [Rmin, Rmax] (e.g., 1-5 Angstrom)
-- k-weight: 1, 2, or 3
+- **k-weight**: Determined by absorber Z, NOT guessed or swept:
+  - **kw=1**: Z ≤ 20 (Ca, K, Cl, S, P, Si, Al, ...) — light absorbers, low-k amplitude peaks
+  - **kw=2**: 20 < Z ≤ 30 (Ti, V, Cr, Mn, Fe, Co, Ni, Cu, Zn) — first-row transition metals
+  - **kw=3**: Z > 30 (Mo, Ru, Pd, Ag, W, Pt, Au, Pb, ...) — heavy absorbers, high-k amplitudes
+  - **Fe K-edge (Z=26) → kw=3 is standard**; kw=2 acceptable for cross-check
+  - For multi-element systems, use the absorber's Z to decide
 - Window function: Hanning / Kaiser-Bessel / etc.
 - E0 shift: initial value and whether to float
 - S02 (amplitude reduction factor): fixed value or float
@@ -324,27 +400,71 @@ None, check the call order.
 data array may be smaller than the number of free parameters. Use `rebin=False` for
 first attempts, enable rebin only when data density is sufficient.
 
-#### 3.3 Fallback: direct feff parse + manual EXAFS equation
+#### 3.3 Phase-Corrected Feff Workflow (Recommended for Accurate dE0)
 
-Only use when FeffPathGroup._calc_chi is unavailable. **The raw feff6 `pha_feff` column
-is missing central-atom phase correction** — expect ΔE₀ to drift negative (typically
-hitting bounds at −10 to −25 eV) as it compensates for the systematic phase offset.
-R-factors will be ~0.5 (vs ~0.1 with _calc_chi).
+When using manual EXAFS equation (not `FeffPathGroup._calc_chi`), you MUST use the
+IFEFFIT phase-corrected `pha` (not raw `pha_feff`) from `FeffPathGroup._feffdat`:
 
 ```python
-# Parse feffNNNN.dat directly (skip 13 header lines in feff6)
-data = np.loadtxt('feff0001.dat', skiprows=13)
+from larch.xafs import FeffPathGroup
+from scipy.interpolate import interp1d
+
+pg = FeffPathGroup(filename='feff0001.dat')
+pg._calc_chi(k=np.arange(0, 20, 0.05))  # triggers phase correction
+fd = pg._feffdat
+
+# fd['pha']     = IFEFFIT-corrected total phase (USE THIS)
+# fd['mag_feff'] = raw backscattering amplitude (USE THIS)
+# fd['pha_feff'] = raw feff phase (DO NOT USE — causes dE0 drift to bounds)
+
+mag_fn = interp1d(fd['k'], fd['mag_feff'], bounds_error=False, fill_value=0)
+pha_fn = interp1d(fd['k'], fd['pha'], bounds_error=False, fill_value=0)
+
+# Standard EXAFS with phase-corrected feff:
+def exafs_shell(k, N, R, sig2, dE, mag_fn, pha_fn):
+    S02 = 0.85
+    ke = np.sqrt(np.maximum(k**2 - 0.2625*dE, 0.01))
+    f = mag_fn(ke)
+    p = pha_fn(ke)
+    return S02 * N * f / (ke * R**2) * np.exp(-2*ke**2*sig2) * np.sin(2*ke*R + p)
+```
+
+**Trap: feff6 header has 14 lines** (not 13). `skiprows=14` for `np.loadtxt`.
+
+**Trap: `_calc_chi()` must be called first** to populate `_feffdat` with corrected arrays.
+
+**Trap: feff ipot=0 is only for absorber.** Fe scatterer sites need a separate `ipot=N+1`.
+
+#### 3.4 Fallback: raw feff parse (DEPRECATED — expect dE0 drift)
+
+Only when FeffPathGroup is unavailable. **Raw `pha_feff` lacks central-atom phase correction**
+— dE0 will drift to -15 to -25 eV bounds. R-factor ≈0.5–0.8 typical.
+
+```python
+# feff6: skip 14 header lines
+data = np.loadtxt('feff0001.dat', skiprows=14)
 feff_k, feff_mag, feff_phase = data[:, 0], data[:, 2], data[:, 3]
 
-# Standard EXAFS equation (phase correction missing)
 def exafs_model(k, amp, R, sig2, dE):
     k_eff = np.sqrt(np.maximum(k**2 - 0.2625*dE, 0.01))
     f = np.interp(k_eff, feff_k, feff_mag)
-    p = np.interp(k_eff, feff_k, feff_phase)
+    p = np.interp(k_eff, feff_k, feff_phase)  # ← raw phase, will bias dE0!
     return S02 * amp * f / (k_eff*R**2) * np.sin(2*k_eff*R + p) * np.exp(-2*k_eff**2*sig2)
 ```
 
-#### 3.4 Fit quality metrics (all approaches)
+#### 3.5 Strict Fitting Protocol
+
+To avoid unphysical results:
+
+1. **Grid search initialization**: Sweep CN∈[2.5,6], R∈[1.90,2.10], s2∈[0.003,0.018], dE∈[-10,8]
+2. **Strict bounds** per element (Fe-O example):
+   - CN: [2.5, 6.5], R: [1.88, 2.15], s2: [0.002, 0.025], dE: [-12, 10]
+3. **Reject fit if ANY** parameter hits its bound edge
+4. **kw=1 preferred** for amplitude-sensitive fits; kw=3 for phase-sensitive fits
+5. **Shared E0** between shells improves stability for >2 shells
+6. **Fix CN to crystallographic values** as a validation check, then compare floating-CN fit
+
+#### 3.6 Fit quality metrics (all approaches)
 
 - R-factor = Σ(χ_exp − χ_fit)² / Σ(χ_exp)²
 - Reduced chi-square = χ² / (N_indep − N_var)
@@ -363,7 +483,7 @@ project_dir/
 │   ├── 01_<sample>_muE.png
 │   ├── 02_<sample>_norm_muE.png
 │   ├── 03_<sample>_chi_k.png
-│   └── 04_<sample>_chi_R.png
+│   └── 04_<sample>_chi_R.png        # |χ(R)|, 0–10 Å
 ├── scripts/
 │   ├── 01_<sample>_XANES.py  # XANES normalization
 │   └── 02_<sample>_fit.py    # Fitting script
@@ -381,7 +501,7 @@ project_dir/
 **Rules**:
 1. Auto-increment Fit_XX: scan existing folders, use next available number
 2. PDF = Page 1 vector fit overview (data + fit + window) + Page 2 fit details (data + fit in R-space + parameter table)
-3. PNG = Fit figure only (data + fit in k-space and R-space), no residual subplot, no table
+3. PNG = Fit figure only (data + fit in k-space and R-space), **no residual in either panel**, no table
 4. Excel = 6 sheets: Feff_Paths, Fit_Parameters, Amplitude_Expression, Fit_Conditions, Data_Processing, Results
 5. All figures use LaTeX math mode for superscripts/subscripts: `$S_0^2$`, `$\sigma^2$`, `$\chi^2_\nu$`, `$\AA^{-1}$`
 6. Script files numbered: 01_, 02_; folders numbered: Fit_01, Fit_02

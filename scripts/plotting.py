@@ -67,12 +67,10 @@ class XAFSFigureGenerator:
             )
 
     def _make_k_space_figure(self, ax: plt.Axes) -> None:
-        """Draw k-space fit overview on a given axes."""
+        """Draw k-space fit overview on a given axes (no residual)."""
         k = np.array(self.result["k_data"])
         chi_data = np.array(self.result["chi_k_data"])
         chi_fit = np.array(self.result["chi_k_fit"])
-        residual = np.array(self.result.get("chi_k_residual", []))
-        window_k = np.array(self.result.get("window_k", []))
 
         kw = self.conditions.get("k_weight", 2)
         kmin = self.conditions.get("k_min", k[0])
@@ -80,13 +78,9 @@ class XAFSFigureGenerator:
 
         kw_data = chi_data * k ** kw
         kw_fit = chi_fit * k ** kw
-        kw_res = residual * k ** kw if len(residual) > 0 else None
 
         ax.plot(k, kw_data, 'k-', linewidth=0.8, label='Data')
         ax.plot(k, kw_fit, 'r-', linewidth=1.0, label='Fit')
-
-        if kw_res is not None and len(kw_res) == len(k):
-            ax.plot(k, kw_res - np.ptp(kw_data) * 0.3, 'b-', linewidth=0.6, label='Residual')
 
         ax.axhline(y=0, color='gray', linewidth=0.4, linestyle='--')
         ax.axvline(x=kmin, color='green', linewidth=0.6, linestyle=':', alpha=0.7)
@@ -102,21 +96,16 @@ class XAFSFigureGenerator:
         ax.set_ylabel(r'$k^{%d}\chi(k)\ (\AA^{-%d})$' % (kw, kw))
         ax.legend(loc='upper right')
 
-    def _make_r_space_figure(self, ax: plt.Axes, include_residual: bool = True) -> None:
-        """Draw R-space fit on a given axes."""
+    def _make_r_space_figure(self, ax: plt.Axes, include_residual: bool = False) -> None:
+        """Draw R-space fit on a given axes. Uses |chi(R)| magnitude, range 0-10 A."""
         r = np.array(self.result["r_data"])
-        chi_r_data = np.array(self.result["chi_r_data"])
-        chi_r_fit = np.array(self.result["chi_r_fit"])
-        chi_r_residual = np.array(self.result.get("chi_r_residual", []))
+        chi_r_data = np.array(self.result.get("chi_r_mag", self.result["chi_r_data"]))
+        chi_r_fit = np.array(self.result.get("chi_r_fit_mag", self.result["chi_r_fit"]))
 
         ax.plot(r, chi_r_data, 'k-', linewidth=0.8, label='Data')
         ax.plot(r, chi_r_fit, 'r-', linewidth=1.0, label='Fit')
 
-        if include_residual and len(chi_r_residual) == len(r):
-            shift = np.ptp(chi_r_data) * 0.4
-            ax.plot(r, chi_r_residual - shift, 'b-', linewidth=0.6, label='Residual')
-            ax.axhline(y=-shift, color='gray', linewidth=0.4, linestyle='--')
-
+        ax.set_xlim(0, 10)
         ax.set_xlabel(r'$R\ (\AA)$')
         ax.set_ylabel(r'$|\chi(R)|\ (\AA^{-3})$')
         ax.legend(loc='upper right')
@@ -144,7 +133,10 @@ class XAFSFigureGenerator:
         # Structure Parameters
         lines.append("Structure Parameters")
         lines.append("-" * 70)
-        header = f"  {'Path':<12s}  {'N':>6s}  {'R (\\AA)':>8s}  {'$\\sigma^2$ (\\AA$^2$)':>16s}  {'$\\Delta E_0$ (eV)':>14s}"
+        r_label = r'R (\AA)'
+        s2_label = r'$\sigma^2$ (\AA$^2$)'
+        de_label = r'$\Delta E_0$ (eV)'
+        header = f"  {'Path':<12s}  {'N':>6s}  {r_label:>8s}  {s2_label:>16s}  {de_label:>14s}"
         lines.append(header)
         lines.append("  " + "-" * 66)
 

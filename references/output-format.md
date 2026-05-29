@@ -31,25 +31,45 @@ project_dir/
 
 ### Page 1 - Fit Overview
 - k-space figure: k^w * chi(k) vs k
-- Data (black), Fit (red), Residual (blue, offset)
+- Data (black), Fit (red)
+- **No residual**
 - k-range window markers (green dotted lines)
 - Text box with: sample name, R-factor, k-weight
 
 ### Page 2 - Fit Details
-- Upper panel: |chi(R)| vs R
-  - Data (black), Fit (red), Residual (blue, offset below)
+- Upper panel: |χ(R)| vs R, range 0–10 Å
+  - Data (black), Fit (red)
+  - **No residual**
+  - R-range window markers (green dotted)
 - Lower panel: Parameter table (text rendered with monospace font)
   - Fit Quality section (R-factor, chi^2_nu, N_indep, N_var)
-  - Structure Parameters section (table with columns: Path, N, R, sigma^2)
+  - Structure Parameters section (table with columns: Path, N, R, sigma^2, dE0)
   - Fit Conditions section (k-range, R-range, k-weight, window, S0^2)
 
 ## PNG Specification
 
-- R-space figure only: |chi(R)| vs R
+- R-space figure: **|χ(R)|** vs R, range **0–10 Å**
 - Data (black), Fit (red)
 - **No residual subplot**
 - **No parameter table**
+- Fit parameters shown as text annotation in corner (small monospace font)
 - Clean figure suitable for publication/presentation
+
+### Fit Figure Specification (2-row layout)
+
+**Upper panel: k-space**
+- k^w·χ(k) vs k
+- Data (black), Fit (red)
+- **No residual**
+- k-range window markers (green dotted)
+- Text box: sample name, R-factor, k-weight
+
+**Lower panel: R-space |χ(R)|, 0–10 Å**
+- |χ(R)| vs R, full 0–10 Å range
+- Data (black), Fit (red)
+- **No residual**
+- R-range window markers (green dotted)
+- Parameter annotation (small text): CN, R, σ², ΔE₀ per shell
 
 ## LaTeX Math Formatting
 
